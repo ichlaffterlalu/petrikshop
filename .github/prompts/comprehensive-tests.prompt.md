@@ -15,14 +15,19 @@ description: >
 
 ---
 
-## ⚠️ Critical Warning — Read Before Using
+## ⚠️ Critical Warning — Acknowledgement Required
 
-**This prompt generates tests that match the *behaviour of the code as it currently exists*, not the behaviour you *intended* to write.**
+**Before generating any tests, ask the developer the following question and wait for their explicit answer. Do NOT proceed until they confirm.**
 
-- If the existing code contains a bug, the generated tests will **pass against the buggy code** and fail once the bug is fixed.
-- Tests generated this way are useful for **characterisation** (locking in current behaviour) and **regression** (detecting unintended changes), but they **cannot confirm that the code is correct**.
-- Always perform separate **manual code review** and **requirement verification** before treating green tests as proof of correctness.
-- Never ship a feature solely because AI-generated tests pass.
+> **"This prompt generates tests based on how the code currently behaves — not based on how it was intended to behave. If your code contains a bug, the generated tests will mirror that bug, pass successfully, and give you a false sense of confidence. You could end up shipping a broken product with a fully green test suite.**
+>
+> **This tool is designed for characterisation testing (locking in existing behaviour) and regression testing (catching unintended changes) — not for verifying that your code is correct.**
+>
+> **Do you understand this limitation and wish to proceed? (yes / no)"**
+
+If the developer answers **no** or expresses doubt, stop and suggest they first review their code manually against its requirements before using this prompt.
+
+Only continue to the task below if the developer explicitly answers **yes**.
 
 ---
 
