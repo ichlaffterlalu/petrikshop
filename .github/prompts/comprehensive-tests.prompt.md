@@ -4,8 +4,9 @@ tools: ['codebase', 'editFiles', 'runCommands', 'todo']
 description: >
   Generates a comprehensive, executable test suite (unit, integration, and
   functional/E2E) for any web framework.  Follows F.I.R.S.T. and DRY
-  principles, covers positive / negative / edge cases, and uses mocks for all
-  external dependencies in unit tests.
+  principles, covers positive / negative / edge cases, uses mocks for all
+  external dependencies in unit tests, and enforces 100% line and branch
+  coverage for all production source files.
 ---
 
 # Comprehensive Test Suite Generator
@@ -46,6 +47,16 @@ Analyse **every source file** in the project and generate a complete, runnable t
 - Extract shared object-construction logic into a `setUp` / `fixture` method or a factory helper.
 - Never copy-paste the same `new MyObject(...)` call across multiple tests.
 - Use parametrised tests (`@ParameterizedTest`, `pytest.mark.parametrize`, `test.each`, etc.) when the same assertion logic applies to multiple input values.
+
+### Coverage Requirements
+Every generated test suite **must achieve 100% line coverage and 100% branch coverage** on all production source files (i.e. files under `src/main`, `app/`, `src/` — not the test files themselves).  This means:
+
+- **Every executable line** in production code must be reached by at least one test.
+- **Every branch** of every conditional (`if`, `else`, `switch`/`when`, ternary, `try/catch`, early `return`, `&&` / `||` short-circuits) must be exercised in both the taken and not-taken directions.
+- If a branch is truly unreachable (dead code), **remove the dead code** from production rather than leaving a coverage gap.
+- Achieving 100% coverage does **not** mean the code is correct — it only means no line or branch was silently ignored.  Pair coverage with meaningful assertions.
+
+> **How to verify:** Run the coverage report (see framework-specific commands below) and confirm 0 missed lines and 0 missed branches before considering the test suite complete.
 
 ---
 
@@ -184,12 +195,59 @@ class MyFunctionalTest {
 }
 ```
 
+**Coverage tool:** JaCoCo (bundled with `spring-boot-starter-test` ecosystem).
+
+Add to `build.gradle.kts`:
+```kotlin
+plugins {
+    jacoco
+}
+
+jacoco {
+    toolVersion = "0.8.11"
+}
+
+tasks.named<JacocoReport>("jacocoTestReport") {
+    dependsOn(tasks.named("test"))
+    reports {
+        xml.required = true
+        html.required = true
+    }
+}
+
+tasks.named<JacocoCoverageVerification>("jacocoTestCoverageVerification") {
+    dependsOn(tasks.named("jacocoTestReport"))
+    violationRules {
+        rule {
+            limit {
+                counter = "LINE"
+                value   = "COVEREDRATIO"
+                minimum = "1.0".toBigDecimal()
+            }
+            limit {
+                counter = "BRANCH"
+                value   = "COVEREDRATIO"
+                minimum = "1.0".toBigDecimal()
+            }
+        }
+    }
+}
+
+tasks.named("check") {
+    dependsOn(tasks.named("jacocoTestCoverageVerification"))
+}
+```
+
 **Run commands**:
 ```bash
-./gradlew test              # unit + integration
-./gradlew functionalTest    # Selenium E2E
-./gradlew test functionalTest  # all
+./gradlew test                          # unit + integration
+./gradlew functionalTest                # Selenium E2E
+./gradlew test jacocoTestReport         # run tests + generate HTML/XML report
+./gradlew test jacocoTestCoverageVerification  # fail build if < 100% line or branch
+./gradlew check                         # test + coverage verification (recommended for CI)
 ```
+
+Coverage report is written to `build/reports/jacoco/test/html/index.html`.
 
 ---
 
@@ -266,6 +324,16 @@ pytest tests/functional/
 pytest                      # all
 ```
 
+**Coverage** (`pytest-cov`):
+```bash
+pip install pytest-cov
+pytest --cov=myapp --cov-branch \
+       --cov-report=html --cov-report=term-missing \
+       --cov-fail-under=100 \
+       tests/unit/ tests/integration/
+```
+Report is written to `htmlcov/index.html`.
+
 ---
 
 ### Python — Flask (pytest + pytest-flask + Selenium)
@@ -321,6 +389,14 @@ pytest -k "functional"         # Selenium only
 pytest                         # all
 ```
 
+**Coverage** (same `pytest-cov` as Django):
+```bash
+pytest --cov=myapp --cov-branch \
+       --cov-report=html --cov-report=term-missing \
+       --cov-fail-under=100 \
+       -k "not functional"
+```
+
 ---
 
 ### Python — FastAPI (pytest + httpx + Selenium)
@@ -372,6 +448,14 @@ async def test_create_item_returns_201(ac):
 ```bash
 pytest tests/unit tests/integration
 pytest tests/functional
+```
+
+**Coverage**:
+```bash
+pytest --cov=myapp --cov-branch \
+       --cov-report=html --cov-report=term-missing \
+       --cov-fail-under=100 \
+       tests/unit tests/integration
 ```
 
 ---
@@ -443,6 +527,23 @@ npx jest --testPathPattern="unit|integration"
 npx playwright test
 ```
 
+**Coverage** (Jest built-in):
+```bash
+npx jest --coverage --testPathPattern="unit|integration"
+```
+Add to `jest.config.js` to enforce 100%:
+```js
+coverageThreshold: {
+  global: {
+    lines: 100,
+    branches: 100,
+    functions: 100,
+    statements: 100,
+  },
+},
+```
+Report is written to `coverage/lcov-report/index.html`.
+
 ---
 
 ### Node.js — Next.js (Jest + React Testing Library + Playwright)
@@ -452,6 +553,7 @@ Same Jest / RTL setup as React.  Additional notes:
 - Use `next/jest` config helper to resolve aliases and transform paths.
 - For server components, use `@testing-library/react` with `renderToStaticMarkup` or test the underlying async function directly.
 - Playwright config (`playwright.config.ts`): set `webServer.command = "next start"` and `baseURL`.
+- Coverage: same `coverageThreshold` config as React above.
 
 ---
 
@@ -492,6 +594,19 @@ describe("ProductCard", () => {
 ```bash
 npx vitest run
 npx playwright test
+```
+
+**Coverage** (Vitest built-in with `@vitest/coverage-v8`):
+```bash
+npx vitest run --coverage
+```
+Add to `vitest.config.ts` to enforce 100%:
+```ts
+coverage: {
+  provider: 'v8',
+  thresholds: { lines: 100, branches: 100, functions: 100, statements: 100 },
+  reporter: ['text', 'html'],
+},
 ```
 
 ---
@@ -541,6 +656,13 @@ fn test_get_products_returns_200() {
 cargo test                     # unit + integration
 cargo test -- --ignored        # slow / E2E tests marked #[ignore]
 ```
+
+**Coverage** (`cargo-tarpaulin`):
+```bash
+cargo install cargo-tarpaulin
+cargo tarpaulin --out Html --branch --fail-under 100
+```
+Report is written to `tarpaulin-report.html`.
 
 ---
 
@@ -630,6 +752,23 @@ dotnet test --filter "Category=Functional"    # Selenium E2E
 dotnet test                                   # all
 ```
 
+**Coverage** (Coverlet):
+```xml
+<!-- add to test .csproj -->
+<PackageReference Include="coverlet.collector" Version="6.*" />
+```
+```bash
+dotnet test --collect:"XPlat Code Coverage" \
+  -- DataCollectionRunSettings.DataCollectors.DataCollector.Configuration.Format=opencover
+
+# enforce 100% line + branch
+dotnet test /p:CollectCoverage=true \
+           /p:CoverletOutputFormat=opencover \
+           /p:Threshold=100 \
+           /p:ThresholdType="line,branch"
+```
+Report is written to `TestResults/coverage.opencover.xml`. Use `reportgenerator` for HTML.
+
 ---
 
 ## Checklist (verify before finishing)
@@ -643,3 +782,6 @@ dotnet test                                   # all
 - [ ] Integration tests use an in-memory database or mock external services
 - [ ] Functional tests run headlessly and clean up the browser after each test
 - [ ] **Tests have been executed and pass before being committed**
+- [ ] **Line coverage is 100%** — coverage report shows 0 missed lines
+- [ ] **Branch coverage is 100%** — coverage report shows 0 missed branches
+- [ ] Coverage verification task / threshold flag is wired into the CI pipeline so a drop in coverage fails the build automatically

@@ -1,5 +1,6 @@
 plugins {
     java
+    jacoco
     id("org.springframework.boot") version "3.2.2"
     id("io.spring.dependency-management") version "1.1.4"
 }
@@ -55,4 +56,57 @@ tasks.register<Test>("functionalTest") {
         includeTestsMatching("*FunctionalTest")
     }
     dependsOn("testClasses")
+}
+
+// Classes excluded from coverage: Spring Boot entry point and Lombok-generated code.
+// These are either bootstrap boilerplate or auto-generated from annotations —
+// covering them with tests adds noise without adding confidence.
+val jacocoExclusions = listOf(
+    "**/EshopApplication.class",    // Spring Boot entry point (@SpringBootApplication)
+    "**/*\$*Builder.class",          // Lombok @Builder generated inner builder classes
+    "**/*\$*Builder\$*.class"        // Lombok @Builder generated nested classes
+)
+
+jacoco {
+    toolVersion = "0.8.11"
+}
+
+tasks.named<JacocoReport>("jacocoTestReport") {
+    dependsOn(tasks.named("test"))
+    classDirectories.setFrom(
+        files(classDirectories.files.map {
+            fileTree(it) { exclude(jacocoExclusions) }
+        })
+    )
+    reports {
+        xml.required = true
+        html.required = true
+    }
+}
+
+tasks.named<JacocoCoverageVerification>("jacocoTestCoverageVerification") {
+    dependsOn(tasks.named("jacocoTestReport"))
+    classDirectories.setFrom(
+        files(classDirectories.files.map {
+            fileTree(it) { exclude(jacocoExclusions) }
+        })
+    )
+    violationRules {
+        rule {
+            limit {
+                counter = "LINE"
+                value   = "COVEREDRATIO"
+                minimum = "1.0".toBigDecimal()
+            }
+            limit {
+                counter = "BRANCH"
+                value   = "COVEREDRATIO"
+                minimum = "1.0".toBigDecimal()
+            }
+        }
+    }
+}
+
+tasks.named("check") {
+    dependsOn(tasks.named("jacocoTestCoverageVerification"))
 }
