@@ -42,16 +42,70 @@ Analyse **every source file** in the project and generate a complete, runnable t
 ### F.I.R.S.T.
 | Letter | Requirement |
 |--------|-------------|
-| **F**ast | Each test must run in isolation without network calls, file I/O, or sleeping.  Use in-memory fakes or mocks for slow dependencies. |
-| **I**solated | Tests must not share mutable state.  Use `@BeforeEach` / `setUp()` / `pytest.fixture` to rebuild fresh fixtures for every single test. |
-| **R**epeatable | Tests must produce identical results on every run, on every machine, at any time.  No random data, no `new Date()`, no hardcoded ports. |
-| **S**elf-validating | Every test must end with at least one assertion.  A test with no assertion is not a test. |
-| **T**imely | Tests should be written alongside (or immediately after) the production code, not as an afterthought. |
+| **F**ast | Each test must complete in milliseconds. No network calls, no real file I/O, no `Thread.sleep` / `time.sleep`. Replace all slow collaborators with in-memory fakes, stubs, or mocks. |
+| **I**solated | No test may depend on the side-effects of another. Rebuild every fixture from scratch in `@BeforeEach` / `setUp()` / `pytest.fixture`. Shared mutable state between tests is a defect, not a convenience. |
+| **R**epeatable | The same test must produce the same result on every machine, at any time, in any order. Eliminate all non-determinism: wall-clock time, random numbers, hardcoded ports, file-system paths, and external services. |
+| **S**elf-validating | Every test must contain at least one explicit assertion that unambiguously passes or fails. Include a descriptive failure message in any assertion whose result would not be self-evident (e.g. `assertEquals(expected, actual, "product id must be prepended with 'esh-'")`) . |
+| **T**imely | Because this prompt generates characterisation tests against *existing* code, "timely" means: write these tests **before making any code change**. The suite must first capture what the code currently does as a stable baseline — only then can you safely refactor. |
+
+### Arrange-Act-Assert (AAA)
+Structure every test body in exactly three named phases, separated by a blank line (*Meszaros, xUnit Test Patterns, 2007, §Arrange-Act-Assert*):
+
+```
+// Arrange — build the minimum fixture the test needs; configure stubs/mocks
+// Act     — invoke exactly ONE behaviour or endpoint
+// Assert  — verify the outcome; no logic, no loops, no further production calls
+```
+
+- **One behaviour per test.** If Act contains more than one call to production code, split the test.
+- **State vs. interaction assertions:** use state assertions (return value, field values) for queries; use interaction assertions (`verify` / `assert_called_once`) only for commands that must fire a side-effect — do not verify both in the same test unless the requirement demands both.
+- Annotate skeletons and generated tests with `// Arrange` / `// Act` / `// Assert` (or `# Arrange` etc. for Python).
+
+### Test Naming Convention
+Name every test method using the pattern (*Osherove, The Art of Unit Testing, 3rd ed.*):
+
+```
+methodOrFeature_stateOrInput_expectedOutcome   (Java / JS / TS)
+test_method_state_expectation                  (Python — snake_case)
+```
+
+Examples:
+```
+findAll_emptyRepository_returnsEmptyList
+create_nullName_throwsIllegalArgumentException
+test_create_order_duplicate_id_returns_none
+```
+
+The name must read as a sentence: *"Given an empty repository, when findAll is called, then it returns an empty list."*
+Never use generic names like `testPositiveCase`, `test1`, or `testSuccess` — they provide no diagnostic information on failure.
+
+### Test Double Selection (*Meszaros, xUnit Test Patterns*, ch. 11)
+Always choose the minimum-power double for the job:
+
+| Double | When to use | Example |
+|--------|-------------|---------|
+| **Stub** | Dependency that *returns data* your code reads (query). No call verification needed. | `when(repo.findAll()).thenReturn(List.of(...))` |
+| **Mock** | Dependency that *receives a command* your code sends (write/notify). Verify the call. | `verify(repo).save(expectedProduct)` |
+| **Fake** | Heavyweight dependency with behaviour (e.g. real DB logic). Use an in-memory implementation. | H2 for JPA, SQLite `:memory:` for SQLAlchemy |
+| **Spy** | Wrap a real object and track *some* calls while keeping real behaviour. Use sparingly. | `@Spy` in Mockito |
+
+Rules:
+- Do **not** mock types you do not own (third-party libraries, framework internals). Use a fake or an integration test.
+- Do **not** use a mock where a stub suffices — unnecessary `verify()` over-specifies the test and makes it fragile to implementation changes.
+- Do **not** patch global module namespaces (e.g. `mocker.patch("myapp.services.MyClass")`) — use constructor injection + `MagicMock(spec=MyClass)` instead.
+
+### Test Design Techniques (ISTQB Foundation Level Syllabus 4.0; ISO 29119-4)
+Apply these techniques to derive test cases exhaustively rather than guessing "interesting" values:
+
+- **Equivalence Partitioning (EP):** divide inputs into valid and invalid partitions; write at least one test per partition.
+- **Boundary Value Analysis (BVA):** for numeric or length-constrained inputs, test the exact lower/upper boundary, one value below it, and one value above it (e.g. for a quantity ≥ 1 rule: test 0, 1, and 2).
+- **Decision Table / State Transition:** for logic with multiple conditions or an observable state machine (e.g. order status transitions), enumerate every row of the decision table or every edge in the state diagram.
 
 ### DRY (Don't Repeat Yourself)
-- Extract shared object-construction logic into a `setUp` / `fixture` method or a factory helper.
-- Never copy-paste the same `new MyObject(...)` call across multiple tests.
-- Use parametrised tests (`@ParameterizedTest`, `pytest.mark.parametrize`, `test.each`, etc.) when the same assertion logic applies to multiple input values.
+- Extract all shared fixture construction into `@BeforeEach` / `setUp()` / `pytest.fixture` or a dedicated builder/factory helper. A fixture method must produce a **fresh, independent** object on every call — never a shared mutable instance.
+- Never copy-paste the same object-construction block across test methods.
+- Use parametrised tests (`@ParameterizedTest`, `pytest.mark.parametrize`, `test.each`) for the same assertion logic applied to multiple EP/BVA values.
+- Consolidate import boilerplate: one `conftest.py` / one `TestBase` class per test layer, not per test file.
 
 ### Coverage Requirements
 Every generated test suite **must achieve 100% line coverage and 100% branch coverage** on all production source files (i.e. files under `src/main`, `app/`, `src/` — not the test files themselves).  This means:
@@ -68,18 +122,17 @@ Every generated test suite **must achieve 100% line coverage and 100% branch cov
 ## What to Generate
 
 ### 1. Unit Tests
-- **Scope:** One class / function at a time.
-- **Mocking:** Mock **every** external dependency (repositories, HTTP clients, database sessions, message brokers, etc.) using the framework's standard mock library.
-- **Coverage per method:**
-  - ✅ Positive case — typical valid input, expected output
-  - ❌ Negative case — invalid/malformed input, expected exception or error response
-  - 🔲 Edge case — boundary values (empty list, zero, `null`, max-int, empty string, single element, exact threshold)
+- **Scope:** One class / function at a time, isolated from all external collaborators. Covers both Presentation Layer classes (controller, view helpers — service collaborators stubbed/mocked) and Business Logic Layer classes (services — repository collaborators stubbed/mocked).
+- **Test doubles:** use a *stub* to supply return values for queries; use a *mock* to verify that a specific command interaction occurred. Do not use a mock where a stub suffices.
+- **Coverage per method — apply EP + BVA systematically:**
+  - ✅ Happy path — at least one valid-input equivalence partition per method
+  - ❌ Error / rejection path — at least one invalid-input partition; verify exception type and message where applicable
+  - 🔲 Boundary values — exact boundary value, one below, one above for every constrained field
 
 ### 2. Integration Tests
-- **Scope:** One slice of the application (web layer, persistence layer) wired together with the framework's test support.
-- Use an in-memory database (H2, SQLite `:memory:`, `mongomock`, etc.) and a mocked HTTP client layer so tests remain self-contained.
-- Test that the components **interact correctly** (routes resolve, middleware fires, ORM queries return expected rows, etc.).
-- Every HTTP-level test must assert: **status code**, **response body / view name**, and **relevant model attributes or JSON fields**.
+- **Scope:** One application slice wired together — either the Presentation Layer + Business Logic Layer (with repositories faked/stubbed), or the Business Logic Layer + Data Access Layer (with a real in-memory store). Aim to test both slices.
+- Use an in-memory database (H2, SQLite `:memory:`, `mongomock`, etc.) — never a shared external database. Tests must remain fully self-contained.
+- Assert all three observable points for every HTTP-level test: **status code**, **response body or view name**, and **model attributes or JSON fields** that confirm the operation succeeded.
 
 ### 3. Functional / End-to-End Tests
 - **Scope:** The running application as a black box, driven through a real browser (Selenium / Playwright) or an HTTP client.
@@ -150,30 +203,107 @@ spring.jpa.hibernate.ddl-auto=create-drop
 
 **Unit test skeleton**:
 ```java
-@ExtendWith(MockitoExtension.class)
-class MyServiceTest {
-    @Mock MyRepository repo;
-    @InjectMocks MyServiceImpl service;
+@ExtendWith(MockitoExtension.class)  // re-creates @Mock fields before every test
+class ProductServiceTest {
 
-    @BeforeEach void setUp() { /* build fixtures */ }
+    // ── Test doubles ───────────────────────────────────────────────────────
+    @Mock  ProductRepository repo;    // stub: returns data; verify only when needed
+    @InjectMocks ProductServiceImpl service;
 
-    @Test void testPositiveCase() { /* when/then */ }
-    @Test void testNegativeCase() { assertThrows(...); }
-    @Test void testEdgeCase()    { /* boundary */ }
+    // ── Shared fixture (rebuilt before every test by MockitoExtension) ─────
+    private Product sampleProduct;
+
+    @BeforeEach
+    void setUp() {
+        sampleProduct = new Product("p1", "Pen", 5); // fresh independent instance
+    }
+
+    // ── AAA unit tests ────────────────────────────────────────────────────
+
+    @Test
+    void findAll_nonEmptyRepository_returnsAllProducts() {
+        // Arrange
+        when(repo.findAll()).thenReturn(List.of(sampleProduct));
+
+        // Act
+        List<Product> result = service.findAll();
+
+        // Assert
+        assertEquals(1, result.size(), "findAll must return all products from repo");
+        assertEquals("Pen", result.get(0).getName());
+    }
+
+    @Test
+    void findAll_emptyRepository_returnsEmptyList() {
+        // Arrange
+        when(repo.findAll()).thenReturn(Collections.emptyList());
+
+        // Act + Assert (trivial act — combined for brevity)
+        assertTrue(service.findAll().isEmpty(), "empty repo must yield empty list");
+    }
+
+    @Test  // BVA: quantity at exact lower boundary (0)
+    void create_zeroQuantity_acceptedAndPersisted() {
+        // Arrange
+        Product zero = new Product(null, "Marker", 0);
+        when(repo.save(any())).thenAnswer(inv -> inv.getArgument(0));
+
+        // Act
+        Product saved = service.create(zero);
+
+        // Assert — state assertion
+        assertEquals(0, saved.getQuantity(), "zero quantity is a valid boundary value");
+        // Assert — interaction: repo.save must have been called exactly once
+        verify(repo).save(any(Product.class));
+    }
+
+    @Test
+    void create_nullName_throwsIllegalArgument() {
+        assertThrows(IllegalArgumentException.class,
+            () -> service.create(new Product(null, null, 1)),
+            "null name must be rejected");
+    }
 }
 ```
 
 **Integration test skeleton**:
 ```java
-@WebMvcTest(MyController.class)
-class MyControllerTest {
-    @Autowired MockMvc mockMvc;
-    @MockBean  MyService service;
+@WebMvcTest(ProductController.class)
+class ProductControllerTest {
 
-    @Test void testGetEndpoint() throws Exception {
-        mockMvc.perform(get("/my-route"))
+    @Autowired MockMvc mockMvc;
+    @MockBean  ProductService service;  // stub the service layer
+
+    private Product sampleProduct;
+
+    @BeforeEach
+    void setUp() {
+        sampleProduct = new Product("p1", "Pen", 5);
+    }
+
+    @Test
+    void getProductList_serviceReturnsProducts_rendersListViewWithData() throws Exception {
+        // Arrange
+        when(service.findAll()).thenReturn(List.of(sampleProduct));
+
+        // Act + Assert (MockMvc fluent API merges act and assert)
+        mockMvc.perform(get("/product/list"))
                .andExpect(status().isOk())
-               .andExpect(view().name("myView"));
+               .andExpect(view().name("productList"))
+               .andExpect(model().attribute("products", hasSize(1)));
+    }
+
+    @Test
+    void postCreateProduct_validInput_redirectsToList() throws Exception {
+        // Arrange
+        when(service.create(any())).thenReturn(sampleProduct);
+
+        // Act + Assert
+        mockMvc.perform(post("/product/create")
+                   .param("productName", "Pen")
+                   .param("productQuantity", "5"))
+               .andExpect(status().is3xxRedirection())
+               .andExpect(redirectedUrl("/product/list"));
     }
 }
 ```
@@ -181,21 +311,33 @@ class MyControllerTest {
 **Functional test skeleton**:
 ```java
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT)
-class MyFunctionalTest {
+class ProductListFunctionalTest {
+
     @LocalServerPort int port;
     WebDriver driver;
 
-    @BeforeEach void setUp() {
+    @BeforeEach
+    void setUp() {
         WebDriverManager.chromedriver().setup();
         ChromeOptions opts = new ChromeOptions();
         opts.addArguments("--headless", "--no-sandbox");
         driver = new ChromeDriver(opts);
     }
-    @AfterEach  void tearDown() { driver.quit(); }
 
-    @Test void testPageLoads() {
-        driver.get("http://localhost:" + port + "/");
-        assertNotNull(driver.findElement(By.tagName("body")));
+    @AfterEach
+    void tearDown() { driver.quit(); }
+
+    @Test
+    void getProductListPage_pageLoads_rendersBody() {
+        // Arrange — server started by @SpringBootTest
+
+        // Act
+        driver.get("http://localhost:" + port + "/product/list");
+
+        // Assert
+        WebElement body = driver.findElement(By.tagName("body"));
+        assertNotNull(body, "page body must exist");
+        assertFalse(body.getText().isBlank(), "page body must contain rendered content");
     }
 }
 ```
@@ -284,16 +426,32 @@ DATABASES = {
 
 **Unit test skeleton**:
 ```python
-# pytest-mock provides the `mocker` fixture — no class needed
-def test_create_order_returns_order(mocker):
-    mock_repo = mocker.patch("myapp.services.OrderRepository")
-    mock_repo.return_value.save.return_value = Order(id=1)
-    svc = OrderService(repo=mock_repo.return_value)
+# Use constructor injection — do NOT patch global module namespaces
+from unittest.mock import MagicMock
 
-    result = svc.create(Order(id=1))
+def test_create_product_nonDuplicate_persistsAndReturns(mocker):
+    # Arrange
+    stub_repo = MagicMock()                         # stub: supply return values
+    stub_repo.find_by_id.return_value = None        # no duplicate
+    stub_repo.save.return_value = Product(id="p1", name="Pen", qty=5)
+    svc = ProductService(repo=stub_repo)            # constructor injection
 
-    assert result.id == 1
-    mock_repo.return_value.save.assert_called_once()
+    # Act
+    result = svc.create(Product(id="p1", name="Pen", qty=5))
+
+    # Assert — state
+    assert result.id == "p1"
+    # Assert — interaction: save must have been called exactly once
+    stub_repo.save.assert_called_once()
+
+def test_create_product_nullName_raisesValueError():
+    # Arrange
+    stub_repo = MagicMock()
+    svc = ProductService(repo=stub_repo)
+
+    # Act + Assert
+    with pytest.raises(ValueError, match="name"):
+        svc.create(Product(id=None, name=None, qty=1))
 ```
 
 **Integration test skeleton** (Django test client):
