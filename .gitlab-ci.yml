@@ -1,0 +1,25 @@
+---
+# Based on the Gradle CI/CD template from GitLab: https://gitlab.com/gitlab-org/gitlab/-/blob/master/lib/gitlab/ci/templates/Gradle.gitlab-ci.yml
+
+include:
+  ## Run CI jobs on all branches by default
+  - template: Workflows/Branch-Pipelines.gitlab-ci.yml
+
+stages:
+  - test
+
+unit-test:
+  stage: test
+  image: docker.io/library/gradle:8.5-jdk21-alpine
+  before_script:
+    - export GRADLE_USER_HOME="$(pwd)/.gradle"
+    - java -version && javac --version
+    - pwd
+  script:
+    - ./gradlew unitTest
+  cache:
+    key:
+      files:
+        - build.gradle.kts
+    paths:
+      - .gradle
